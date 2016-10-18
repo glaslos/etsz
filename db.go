@@ -1,10 +1,16 @@
 package etsz
 
 import (
+	"sort"
 	"time"
 
 	"github.com/dgryski/go-tsz"
 )
+
+type entry struct {
+	Date  int32   `json:"date"`
+	Value float64 `json:"value"`
+}
 
 type data struct {
 	Date  int32   `json:"date"`
@@ -55,7 +61,7 @@ func (edb *EDB) Insert(v float64, databaseName string) bool {
 	now := time.Now()
 	edb.getDB(databaseName).Push(uint32(now.Unix()), v)
 	currentDayString := now.Format("20060102")
-	for shardName, _ := range edb.DBList[databaseName] {
+	for shardName := range edb.DBList[databaseName] {
 		if shardName[:8] != currentDayString {
 			delete(edb.DBList[databaseName], shardName)
 		}
@@ -63,29 +69,64 @@ func (edb *EDB) Insert(v float64, databaseName string) bool {
 	return true
 }
 
+func aggr(shardDB *tsz.Series) map[time.Time]float64 {
+	aggregated := map[time.Time]float64{}
+	it := shardDB.Iter()
+	for it.Next() {
+		tt, vv := it.Values()
+		aggregated[time.Unix(int64(tt), 0)] += vv
+	}
+	return aggregated
+}
+
 // Read data from time series
-func (edb *EDB) Read(databaseName string) []Result {
-	r := []Result{}
-	for dbName, shards := range edb.DBList {
-		rr := Result{Name: dbName, Shards: []shard{}}
-		for shardName, shardDB := range shards {
-			dataShard := shard{Range: shardName, Data: []data{}}
-			// Aggregate the data by
-			aggregated := map[time.Time]float64{}
-			it := shardDB.Iter()
-			for it.Next() {
-				tt, vv := it.Values()
-				aggregated[time.Unix(int64(tt), 0)] += vv
-			}
-			for tt, vv := range aggregated {
-				if tt.After(time.Now().Add(-60 * time.Minute)) {
-					dataShard.Data = append(dataShard.Data, data{int32(tt.Unix()), vv})
-				}
-			}
-			rr.Shards = append(rr.Shards, dataShard)
+func (edb *EDB) Read(databaseName string) Result {
+	rr := Result{Name: databaseName, Shards: []shard{}}
+	db := edb.DBList[databaseName]
+	for shardName, shardDB := range db {
+		dataShard := shard{Range: shardName, Data: []data{}}
+		// Aggregate the data by
+		aggregated := aggr(shardDB)
+		it := shardDB.Iter()
+		for it.Next() {
+			tt, vv := it.Values()
+			aggregated[time.Unix(int64(tt), 0)] += vv
 		}
+		for tt, vv := range aggregated {
+			if tt.After(time.Now().Add(-60 * time.Minute)) {
+				dataShard.Data = append(dataShard.Data, data{int32(tt.Unix()), vv})
+			}
+		}
+		rr.Shards = append(rr.Shards, dataShard)
+	}
+	return rr
+}
+
+// ReadAll data from all time series
+func (edb *EDB) ReadAll() []Result {
+	r := []Result{}
+	for dbName := range edb.DBList {
+		rr := edb.Read(dbName)
 		r = append(r, rr)
 	}
-
 	return r
+}
+
+// ReadInt reads data from time series and returns an integer array
+// TODO (glaslos): This is some ugly shit...
+func (edb *EDB) ReadInt(databaseName string) []int {
+	db := edb.getDB(databaseName)
+	aggregated := aggr(db)
+	// To store the keys in slice in sorted order
+	var keys []int
+	for k := range aggregated {
+		keys = append(keys, int(k.Unix()))
+	}
+	sort.Ints(keys)
+
+	vals := []int{}
+	for _, k := range keys {
+		vals = append(vals, int(aggregated[time.Unix(int64(k), 0)]))
+	}
+	return vals
 }

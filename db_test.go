@@ -1,6 +1,7 @@
 package etsz
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -21,16 +22,25 @@ func TestInsert(t *testing.T) {
 	edb.Insert(1.0, "test")
 }
 
-func TestRead(t *testing.T) {
+func TestReadAll(t *testing.T) {
 	edb := New()
-	edb.Read("test")
-	edb.Read("")
+	edb.Insert(1.0, "test")
+	edb.ReadAll()
+}
+
+func TestReadInt(t *testing.T) {
+	edb := New()
+	edb.getDB("test")
+	edb.Insert(1.0, "test")
+	edb.Insert(1.0, "test")
+	fmt.Println(edb.ReadInt("test"))
 }
 
 func TestInsertRead(t *testing.T) {
 	edb := New()
 	edb.Insert(1.0, "test")
-	_ = edb.Read("test")
+	d := edb.Read("test")
+	fmt.Printf("%+v\n", d)
 }
 
 func TestDeleteShard(t *testing.T) {
